@@ -1,0 +1,93 @@
+parameters:
+  - name: env
+    type: string
+  - name: adoEnv
+    type: string
+  - name: pool
+    type: object
+  - name: serviceConnection
+    type: string
+
+jobs:
+  - job: terraform_fmt_${{ parameters.env }}
+    displayName: 'Terraform Format Check (${{ parameters.env }})'
+    pool: ${{ parameters.pool }}
+    variables:
+      - group: ${{ parameters.adoEnv }}
+    steps:
+      - checkout: self
+        path: 's/$(Build.Repository.Name)'
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '1.5.7'
+      - task: TerraformTaskV3@3
+        displayName: 'Terraform Format Check'
+        inputs:
+          provider: 'azurerm'
+          command: 'custom'
+          customCommand: 'fmt'
+          arguments: '-check -recursive'
+          workingDirectory: 'iac'
+          backendServiceArm: ${{ parameters.serviceConnection }}
+
+  - job: terraform_init_${{ parameters.env }}
+    displayName: 'Terraform Init (${{ parameters.env }})'
+    dependsOn: terraform_fmt_${{ parameters.env }}
+    pool: ${{ parameters.pool }}
+    variables:
+      - group: ${{ parameters.adoEnv }}
+    steps:  
+      - checkout: self
+        path: 's/$(Build.Repository.Name)'
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '1.5.7'
+      - task: TerraformTaskV3@3
+        displayName: 'Terraform Init'
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: 'iac'
+          backendServiceArm: ${{ parameters.serviceConnection }}
+
+  - job: terraform_plan_${{ parameters.env }}
+    displayName: 'Terraform Plan (${{ parameters.env }})'
+    dependsOn: terraform_init_${{ parameters.env }}
+    pool: ${{ parameters.pool }}
+    variables:
+      - group: ${{ parameters.adoEnv }}
+    steps:
+      - checkout: self
+        path: 's/$(Build.Repository.Name)'
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '1.5.7'
+      - task: TerraformTaskV3@3
+        displayName: 'Terraform Plan'
+        inputs:
+          provider: 'azurerm'
+          command: 'plan'
+          workingDirectory: 'iac'
+          environmentServiceNameAzureRM: ${{ parameters.serviceConnection }}
+          commandOptions: '-var-file=env/${{ parameters.env }}/main.tfvars'
+
+  - job: terraform_apply_${{ parameters.env }}
+    displayName: 'Terraform Apply (${{ parameters.env }})'
+    dependsOn: terraform_plan_${{ parameters.env }}
+    pool: ${{ parameters.pool }}
+    variables:
+      - group: ${{ parameters.adoEnv }}
+    steps:
+      - checkout: self
+        path: 's/$(Build.Repository.Name)'
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '1.5.7'
+      - task: TerraformTaskV3@3
+        displayName: 'Terraform Apply'
+        inputs:
+          provider: 'azurerm'
+          command: 'apply'
+          workingDirectory: 'iac'
+          environmentServiceNameAzureRM: ${{ parameters.serviceConnection }}
+          commandOptions: '-var-file=env/${{ parameters.env }}/main.tfvars -auto-approve'
