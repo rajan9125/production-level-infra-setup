@@ -5,7 +5,7 @@ resource "azurerm_resource_group" "ams_monitoring_rg" {
 }
 
 resource "azurerm_storage_account" "ams_storage_account" {
-  name                            = "st1amsmonitoring${var.location_short}${var.env}"
+  name                            = "st12amsmonitoring${var.location_short}${var.env}"
   resource_group_name             = azurerm_resource_group.ams_monitoring_rg.name
   location                        = var.location
   account_replication_type        = var.account_replication_type

@@ -39,7 +39,7 @@ stages:
           env: dev
           adoEnv: 'dev-env-vars'
           pool: 
-            name: 'Azure Pipelines'
+            name: 'MyAgent'
             vmImage: 'ubuntu-latest'
           serviceConnection: 'dev-service-connection'
 
@@ -52,7 +52,7 @@ stages:
           env: stage
           adoEnv: 'stage-env-vars'
           pool: 
-            name: 'Azure Pipelines'
+            name: 'MyAgent'
             vmImage: 'ubuntu-latest'
           serviceConnection: 'stage-service-connection'
 
@@ -65,7 +65,7 @@ stages:
           env: test
           adoEnv: 'test-env-vars'
           pool: 
-            name: 'Azure Pipelines'
+            name: 'MyAgent'
             vmImage: 'ubuntu-latest'
           serviceConnection: 'test-service-connection'
 

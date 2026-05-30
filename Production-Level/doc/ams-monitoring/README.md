@@ -78,3 +78,4 @@ terraform apply --var-file="env/prod/main.tfvars"
 - Always use the correct variable file (`.tfvars`) for the target environment.
 - The environment is controlled only through the `--var-file` parameter.
 - Same code is reused across all environments — only configuration changes.
+- Multi Environment ke liye Multiple 

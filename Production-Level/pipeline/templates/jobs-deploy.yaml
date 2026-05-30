@@ -1,0 +1,26 @@
+parameters:
+  - name: env
+    type: string
+  - name: adoEnv
+    type: string
+  - name: pool
+    type: string
+  - name: serviceConnection
+    type: string
+
+jobs:
+  - deployment: terraform
+    displayName: Terraform
+    environment: ${{parameters.adoEnv}}
+    pool: 
+      name: ${{parameters.pool}}
+    workspace:
+      clean: all
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - template: 
+              parameters:
+                
