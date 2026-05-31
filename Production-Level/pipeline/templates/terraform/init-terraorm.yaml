@@ -1,0 +1,118 @@
+parameters:
+- name: terraformVersion
+  type: string
+  default: '1.7.4'
+- name: terraformBackendKey
+  type: string
+  default: $(TF_BACKEND_key)
+- name: rootDirectory
+  type: string
+  default: iac
+- name: environmentType
+  type: string
+  default: dev
+- name: adoSubscriptionEndpoint
+  type: string
+- name: tfstateLocation
+  type: string
+  default: 'westeurope'
+
+steps:
+- task: TerraformInstaller@0
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: ${{ parameters.terraformVersion }}
+
+- task: DeleteFiles@1
+  displayName: Delete .terraform files
+  inputs:
+    SourceFolder: ${{ parameters.rootDirectory }}
+    Contents: .terraform
+
+- task: PowerShell@2
+  displayName: Parse backend configuration from env folder
+  inputs:
+    targetType: inline
+    script: |
+      $backendFile = "${{ parameters.rootDirectory }}/env/${{ parameters.environmentType }}/backend.tf"
+      if (-not (Test-Path $backendFile)) {
+        Write-Error "Backend configuration not found at $backendFile"
+        exit 1
+      }
+      Write-Host "Reading backend configuration from: $backendFile"
+      $content = Get-Content -Path $backendFile -Raw
+      $content | Select-String -Pattern '\w+\s*=\s*"[^"]*"' -AllMatches | ForEach-Object {
+        $_.Matches | ForEach-Object {
+          if ($_.Value -match '(\w+)\s*=\s*"([^"]*)"') {
+            $key = $matches[1]
+            $value = $matches[2]
+            Write-Host "TF_BACKEND_$($key): $value"
+            Write-Host "##vso[task.setvariable variable=TF_BACKEND_$($key)]$value"
+          }
+        }
+      }
+
+- task: AzureCLI@2
+  displayName: Ensure terraform resource group exists
+  inputs:
+    azureSubscription: ${{ parameters.adoSubscriptionEndpoint }}
+    ScriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az group create --name "$(TF_BACKEND_resource_group_name)" --location "${{ parameters.tfstateLocation }}"
+
+- task: AzureCLI@2
+  displayName: Ensure terraform state storage account exists
+  inputs:
+    azureSubscription: ${{ parameters.adoSubscriptionEndpoint }}
+    ScriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      # Backend storage account uses RBAC-only (passwordless via Entra ID)
+      az storage account create --name "$(TF_BACKEND_storage_account_name)" --resource-group "$(TF_BACKEND_resource_group_name)" --location "${{ parameters.tfstateLocation }}" --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 --allow-shared-key-access false
+
+- task: AzureCLI@2
+  displayName: Assign backend RBAC (pre-init)
+  inputs:
+    azureSubscription: ${{ parameters.adoSubscriptionEndpoint }}
+    addSpnToEnvironment: true
+    ScriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      # Ensure pipeline SP has required role; assign only if missing.
+      Write-Host "Looking up Service Principal using App ID from service connection"
+      $SP_OBJECT_ID = az ad sp show --id $env:servicePrincipalId --query id -o tsv
+
+      if ([string]::IsNullOrEmpty($SP_OBJECT_ID)) {
+        Write-Error "Service principal with App ID '$($env:servicePrincipalId)' not found"
+        exit 1
+      }
+
+      Write-Host "Found Service Principal Object ID: $SP_OBJECT_ID"
+      $SA_ID = az storage account show --name "$(TF_BACKEND_storage_account_name)" --resource-group "$(TF_BACKEND_resource_group_name)" --query id -o tsv
+
+      Write-Host "Granting 'Storage Blob Data Contributor' to service principal on backend storage account"
+      az role assignment create --assignee-object-id $SP_OBJECT_ID --assignee-principal-type ServicePrincipal --role "Storage Blob Data Contributor" --scope $SA_ID --only-show-errors
+      Write-Host "Role assignment created successfully"
+
+- task: AzureCLI@2
+  displayName: Ensure terraform state container exists
+  inputs:
+    azureSubscription: ${{ parameters.adoSubscriptionEndpoint }}
+    ScriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az storage container create --name "$(TF_BACKEND_container_name)" --account-name "$(TF_BACKEND_storage_account_name)" --auth-mode login
+
+- task: TerraformTaskV4@4
+  displayName: terraform init
+  inputs:
+    provider: 'azurerm'
+    command: 'init'
+    backendServiceArm: ${{ parameters.adoSubscriptionEndpoint }}
+    backendAzureRmResourceGroupName: $(TF_BACKEND_resource_group_name)
+    backendAzureRmStorageAccountName: $(TF_BACKEND_storage_account_name)
+    backendAzureRmContainerName: $(TF_BACKEND_container_name)
+    backendAzureRmKey: ${{ parameters.terraformBackendKey }}
+    backendAzureRmUseEntraIdForAuthentication: true
+    workingDirectory: ${{ parameters.rootDirectory }}

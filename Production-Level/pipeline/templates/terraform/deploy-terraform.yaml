@@ -1,0 +1,144 @@
+parameters:
+- name: terraformVersion
+  type: string
+  default: '1.7.4'
+- name: terraformBackendKey
+  type: string
+  default: $(TF_BACKEND_key)
+- name: rootDirectory
+  type: string
+  default: iac
+- name: environmentType
+  type: string
+  default: dev
+- name: adoSubscriptionEndpoint
+  type: string
+- name: additionalVariables
+  type: string
+  default: ''
+- name: publishArtifact
+  type: boolean
+  default: false
+- name: artifactName
+  type: string
+  default: $(Agent.JobName) - Terraform output
+- name: addAdoProviderAuthorization
+  type: boolean
+  default: false
+- name: parseOutputs
+  type: boolean
+  default: true
+- name: skipApply
+  type: boolean
+  default: false
+
+steps:
+- template: init-terraform.yaml
+  parameters:
+    terraformVersion: ${{ parameters.terraformVersion }}
+    terraformBackendKey: ${{ parameters.terraformBackendKey }}
+    rootDirectory: ${{ parameters.rootDirectory }}
+    environmentType: ${{ parameters.environmentType }}
+    adoSubscriptionEndpoint: ${{ parameters.adoSubscriptionEndpoint }}
+
+- task: TerraformTaskV4@4
+  displayName: terraform validate
+  inputs:
+    provider: azurerm
+    command: validate
+    workingDirectory: ${{ parameters.rootDirectory }}
+
+- task: TerraformTaskV4@4
+  name: terraformPlan
+  displayName: terraform plan
+  inputs:
+    provider: azurerm
+    command: plan
+    commandOptions: >-
+      -input=false
+      -out=$(System.DefaultWorkingDirectory)/terraform.tfplan
+      ${{ parameters.additionalVariables }}
+    workingDirectory: ${{ parameters.rootDirectory }}
+    environmentServiceNameAzureRM: ${{ parameters.adoSubscriptionEndpoint }}
+  ${{ if parameters.addAdoProviderAuthorization }}:
+    env:
+      AZDO_PERSONAL_ACCESS_TOKEN: $(System.AccessToken)
+      AZDO_ORG_SERVICE_URL: $(System.CollectionUri)
+
+- ${{ if ne(variables['Build.Reason'], 'PullRequest') }}:
+  - task: TerraformTaskV4@4
+    name: terraformApply
+    displayName: terraform apply
+    condition: and(succeeded(), eq(variables['terraformPlan.changesPresent'], 'true'))
+    enabled: ${{ not(parameters.skipApply) }}
+    continueOnError: false
+    inputs:
+      provider: azurerm
+      command: apply
+      commandOptions: >
+        -input=false
+        -auto-approve
+        $(System.DefaultWorkingDirectory)/terraform.tfplan
+      workingDirectory: ${{ parameters.rootDirectory }}
+      environmentServiceNameAzureRM: ${{ parameters.adoSubscriptionEndpoint }}
+    ${{ if parameters.addAdoProviderAuthorization }}:
+      env:
+        AZDO_PERSONAL_ACCESS_TOKEN: $(System.AccessToken)
+        AZDO_ORG_SERVICE_URL: $(System.CollectionUri)
+
+  - task: TerraformTaskV4@4
+    name: terraformOutput
+    displayName: 'terraform output'
+    inputs:
+      provider: azurerm
+      command: output
+      workingDirectory: ${{ parameters.rootDirectory }}
+      environmentServiceNameAzureRM: ${{ parameters.adoSubscriptionEndpoint }}
+
+  - ${{ if parameters.parseOutputs }}:
+    - task: PowerShell@2
+      displayName: Parse output
+      inputs:
+        targetType: inline
+        script: |
+          $convertedOut = [ordered]@{}
+          (Get-Content $Env:TERRAFORMOUTPUT_JSONOUTPUTVARIABLESPATH -Raw | ConvertFrom-Json -AsHashtable).getenumerator() |
+          ForEach-Object {
+            $convertedOut[$_.key] = $_.value.value
+          }
+
+          if ($convertedOut.Count -gt 0) {
+            $convertedOut | ConvertTo-Json -Depth 100 |
+            Out-File "${{ parameters.rootDirectory }}/outputs.json" -Encoding ascii
+          }
+
+    - ${{ if parameters.publishArtifact }}:
+      - task: PublishPipelineArtifact@1
+        displayName: Publish outputs artifact
+        inputs:
+          targetPath: ${{ parameters.rootDirectory }}/outputs.json
+          artifactName: ${{ parameters.artifactName }}
+
+- task: AzureCLI@2
+  displayName: Remove backend RBAC (cleanup)
+  condition: always()
+  inputs:
+    azureSubscription: ${{ parameters.adoSubscriptionEndpoint }}
+    addSpnToEnvironment: true
+    ScriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      # Remove the temporary Storage Blob Data Contributor role assigned during init
+      Write-Host "Looking up Service Principal using App ID from service connection"
+      $SP_OBJECT_ID = az ad sp show --id $env:servicePrincipalId --query id -o tsv
+
+      if ([string]::IsNullOrEmpty($SP_OBJECT_ID)) {
+        Write-Error "Service principal with App ID '$($env:servicePrincipalId)' not found"
+        exit 1
+      }
+
+      $SA_ID = az storage account show --name "$(TF_BACKEND_storage_account_name)" --resource-group "$(TF_BACKEND_resource_group_name)" --query id -o tsv
+
+      Write-Host "Removing 'Storage Blob Data Contributor' role assignment"
+      az role assignment delete --assignee-object-id $SP_OBJECT_ID --role "Storage Blob Data Contributor" --scope $SA_ID --only-show-errors || Write-Host "Role assignment may not exist; continuing"
+      Write-Host "Role assignment removed successfully"

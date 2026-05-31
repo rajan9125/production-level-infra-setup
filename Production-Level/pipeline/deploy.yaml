@@ -12,15 +12,6 @@ parameters:
   - name: dev
     type: boolean
     default: true
-  - name: stage
-    type: boolean
-    default: false
-  - name: test
-    type: boolean
-    default: false
-  - name: prod
-    type: boolean
-    default: false
 
 resources:
   repositories:
@@ -32,52 +23,11 @@ resources:
 stages:
   - stage: deploy_dev
     displayName: Deploy Dev
-    condition: eq('${{ parameters.dev }}', 'true')
+    condition: and(succeeded(), ${{ parameters.dev }})
     jobs:
-      - template: templates/terraform/deploy-terraform.yaml
+      - template: templates/jobs-deploy.yaml
         parameters:
           env: dev
-          adoEnv: 'dev-env-vars'
-          pool: 
-            name: 'MyAgent'
-            vmImage: 'ubuntu-latest'
-          serviceConnection: 'dev-service-connection'
-
-  - stage: deploy_stage
-    displayName: Deploy Stage
-    condition: eq('${{ parameters.stage }}', 'true')
-    jobs:
-      - template: templates/terraform/deploy-terraform.yaml
-        parameters:
-          env: stage
-          adoEnv: 'stage-env-vars'
-          pool: 
-            name: 'MyAgent'
-            vmImage: 'ubuntu-latest'
-          serviceConnection: 'stage-service-connection'
-
-  - stage: deploy_test
-    displayName: Deploy Test
-    condition: eq('${{ parameters.test }}', 'true')
-    jobs:
-      - template: templates/terraform/deploy-terraform.yaml
-        parameters:
-          env: test
-          adoEnv: 'test-env-vars'
-          pool: 
-            name: 'MyAgent'
-            vmImage: 'ubuntu-latest'
-          serviceConnection: 'test-service-connection'
-
-  - stage: deploy_prod
-    displayName: Deploy Prod
-    condition: eq('${{ parameters.prod }}', 'true')
-    jobs:
-      - template: templates/terraform/deploy-terraform.yaml
-        parameters:
-          env: prod
-          adoEnv: 'prod-env-vars'
-          pool: 
-            name: 'Azure Pipelines'
-            vmImage: 'ubuntu-latest'
-          serviceConnection: 'prod-service-connection' 
+          adoEnv: dev
+          pool: myaget
+          serviceConnection: myconection

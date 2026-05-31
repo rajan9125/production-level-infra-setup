@@ -3,6 +3,7 @@ parameters:
     type: string
   - name: adoEnv
     type: string
+    default: ''
   - name: pool
     type: string
   - name: serviceConnection
@@ -10,10 +11,12 @@ parameters:
 
 jobs:
   - deployment: terraform
-    displayName: Terraform
-    environment: ${{parameters.adoEnv}}
-    pool: 
-      name: ${{parameters.pool}}
+    displayName: Terraform - ${{ parameters.env }}
+    environment: ${{ parameters.adoEnv }}
+    pool:
+      name: ${{ parameters.pool }}
+      demands:
+        - agent.name -equals agent
     workspace:
       clean: all
     strategy:
@@ -21,6 +24,13 @@ jobs:
         deploy:
           steps:
             - checkout: self
-            - template: 
+            - template: terraform/deploy-terraform.yaml
               parameters:
+                adoSubscriptionEndpoint: ${{ parameters.serviceConnection }}
+                rootDirectory: iac
+                environmentType: ${{ parameters.env }}
+                additionalVariables: -var-file="env/${{ parameters.env }}/main.tfvars"
+                terraformVersion: "1.7.4"
+                publishArtifact: true
+                parseOutputs: true
                 
